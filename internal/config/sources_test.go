@@ -407,3 +407,81 @@ func TestLoadSourceConfig_DefaultEntryPoints(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadSourceInstanceConfig_AXFR(t *testing.T) {
+	t.Run("loads axfr settings", func(t *testing.T) {
+		os.Clearenv()
+		os.Setenv("DNSWEAVER_SOURCES", "axfr")
+
+		keyFile, err := os.CreateTemp("", "dnsweaver-axfr-tsig-*")
+		if err != nil {
+			t.Fatalf("CreateTemp() error = %v", err)
+		}
+		defer os.Remove(keyFile.Name())
+
+		tsigKey := "base64-example-key"
+		if _, err := keyFile.WriteString(tsigKey); err != nil {
+			t.Fatalf("WriteString() error = %v", err)
+		}
+		if err := keyFile.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_SERVER", "127.0.0.1:53")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_PROVIDER", "example-provider")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_TSIG_NAME", "axfr.example.")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_TSIG_KEY_FILE", keyFile.Name())
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_TSIG_ALGO", "hmac-sha256.")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_SYNC_SOA", "true")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_SYNC_NS", "false")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_SYNC_APEX_ADDRESS", "yes")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_ADDRESS_REWRITE_TARGET", "10.10.10.10")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_ADDRESS_REWRITE_CIDRS", "192.168.1.0/24,invalid")
+		_ = os.Setenv("DNSWEAVER_SOURCE_AXFR_ZONES", " example.com,  , example.net ")
+
+		cfg := loadSourceInstanceConfig("axfr")
+		if cfg == nil {
+			t.Fatal("loadSourceInstanceConfig( axfr) returned nil")
+		}
+		if cfg.AXFR.Server != "127.0.0.1:53" {
+			t.Errorf("AXFR.Server = %q, want %q", cfg.AXFR.Server, "127.0.0.1:53")
+		}
+		if cfg.AXFR.Provider != "example-provider" {
+			t.Errorf("AXFR.Provider = %q, want %q", cfg.AXFR.Provider, "example-provider")
+		}
+		if cfg.AXFR.TSIGName != "axfr.example." {
+			t.Errorf("AXFR.TSIGName = %q, want %q", cfg.AXFR.TSIGName, "axfr.example.")
+		}
+		if cfg.AXFR.TSIGKey != tsigKey {
+			t.Errorf("AXFR.TSIGKey = %q, want %q", cfg.AXFR.TSIGKey, tsigKey)
+		}
+		if cfg.AXFR.TSIGAlgo != "hmac-sha256." {
+			t.Errorf("AXFR.TSIGAlgo = %q, want %q", cfg.AXFR.TSIGAlgo, "hmac-sha256.")
+		}
+		if !cfg.AXFR.SyncSOA {
+			t.Errorf("AXFR.SyncSOA = %v, want true", cfg.AXFR.SyncSOA)
+		}
+		if cfg.AXFR.SyncNS {
+			t.Errorf("AXFR.SyncNS = %v, want false", cfg.AXFR.SyncNS)
+		}
+		if !cfg.AXFR.SyncApexAddress {
+			t.Errorf("AXFR.SyncApexAddress = %v, want true", cfg.AXFR.SyncApexAddress)
+		}
+		if cfg.AXFR.AddressRewriteTarget != "10.10.10.10" {
+			t.Errorf("AXFR.AddressRewriteTarget = %q, want %q", cfg.AXFR.AddressRewriteTarget, "10.10.10.10")
+		}
+		if len(cfg.AXFR.AddressRewriteCIDRs) != 1 || cfg.AXFR.AddressRewriteCIDRs[0] != "192.168.1.0/24" {
+			t.Errorf("AXFR.AddressRewriteCIDRs = %v, want [192.168.1.0/24]", cfg.AXFR.AddressRewriteCIDRs)
+		}
+		wantZones := []string{"example.com", "example.net"}
+		if len(cfg.AXFR.Zones) != len(wantZones) {
+			t.Errorf("AXFR.Zones len = %d, want %d: got=%v", len(cfg.AXFR.Zones), len(wantZones), cfg.AXFR.Zones)
+			return
+		}
+		for i, want := range wantZones {
+			if cfg.AXFR.Zones[i] != want {
+				t.Errorf("AXFR.Zones[%d] = %q, want %q", i, cfg.AXFR.Zones[i], want)
+			}
+		}
+	})
+}

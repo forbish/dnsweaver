@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -23,6 +24,24 @@ type SourceInstanceConfig struct {
 	// Traefik's `entryPoints.<name>.asDefault = true` configuration.
 	// See sources/traefik.WithDefaultEntryPoints. Ignored for non-traefik sources.
 	DefaultEntryPoints []string
+
+	// AXFR contains zone-transfer source settings. Used only by the axfr source.
+	AXFR AXFRSourceConfig
+}
+
+// AXFRSourceConfig holds zone-transfer source settings.
+type AXFRSourceConfig struct {
+	Server               string
+	Zones                []string
+	Provider             string
+	TSIGName             string
+	TSIGKey              string
+	TSIGAlgo             string
+	SyncSOA              bool
+	SyncNS               bool
+	SyncApexAddress      bool
+	AddressRewriteCIDRs  []string
+	AddressRewriteTarget string
 }
 
 // SourceConfig holds all source configuration.
@@ -147,6 +166,39 @@ func loadSourceInstanceConfig(name string) *SourceInstanceConfig {
 			}
 		}
 		cfg.DefaultEntryPoints = out
+	}
+
+	if name == "axfr" {
+		cfg.AXFR.Server = getEnv(prefix + "SERVER")
+		cfg.AXFR.Provider = getEnv(prefix + "PROVIDER")
+		cfg.AXFR.TSIGName = getEnv(prefix + "TSIG_NAME")
+		cfg.AXFR.TSIGKey = getEnvOrFile(prefix+"TSIG_KEY", prefix+"TSIG_KEY_FILE")
+		cfg.AXFR.TSIGAlgo = getEnv(prefix + "TSIG_ALGO")
+		cfg.AXFR.SyncSOA = parseBool(getEnv(prefix+"SYNC_SOA"), false)
+		cfg.AXFR.SyncNS = parseBool(getEnv(prefix+"SYNC_NS"), false)
+		cfg.AXFR.SyncApexAddress = parseBool(getEnv(prefix+"SYNC_APEX_ADDRESS"), false)
+		cfg.AXFR.AddressRewriteTarget = getEnv(prefix + "ADDRESS_REWRITE_TARGET")
+
+		if cidrs := getEnv(prefix + "ADDRESS_REWRITE_CIDRS"); cidrs != "" {
+			for _, cidr := range strings.Split(cidrs, ",") {
+				cidr = strings.TrimSpace(cidr)
+				if cidr == "" {
+					continue
+				}
+				if _, _, err := net.ParseCIDR(cidr); err == nil {
+					cfg.AXFR.AddressRewriteCIDRs = append(cfg.AXFR.AddressRewriteCIDRs, cidr)
+				}
+			}
+		}
+
+		if zones := getEnv(prefix + "ZONES"); zones != "" {
+			for _, zone := range strings.Split(zones, ",") {
+				zone = strings.TrimSpace(zone)
+				if zone != "" {
+					cfg.AXFR.Zones = append(cfg.AXFR.Zones, zone)
+				}
+			}
+		}
 	}
 
 	return cfg
