@@ -160,32 +160,6 @@ func registerSources(registry *source.Registry, cfg *config.Config, logger *slog
 			logger.Info("registered source",
 				slog.String("name", name),
 			)
-		case "axfr":
-			sourceConfig := cfg.GetSourceInstance("axfr")
-			src := axfr.New(
-				axfr.WithLogger(logger),
-				axfr.WithConfig(axfr.Config{
-					Server:               sourceConfig.AXFR.Server,
-					Zones:                sourceConfig.AXFR.Zones,
-					Provider:             sourceConfig.AXFR.Provider,
-					TSIGName:             sourceConfig.AXFR.TSIGName,
-					TSIGKey:              sourceConfig.AXFR.TSIGKey,
-					TSIGAlgo:             sourceConfig.AXFR.TSIGAlgo,
-					SyncSOA:              sourceConfig.AXFR.SyncSOA,
-					SyncNS:               sourceConfig.AXFR.SyncNS,
-					SyncApexAddress:      sourceConfig.AXFR.SyncApexAddress,
-					AddressRewriteCIDRs:  sourceConfig.AXFR.AddressRewriteCIDRs,
-					AddressRewriteTarget: sourceConfig.AXFR.AddressRewriteTarget,
-				}),
-			)
-			if err := registry.RegisterRecordSource(src); err != nil {
-				return fmt.Errorf("registering axfr source: %w", err)
-			}
-			logger.Info("registered record source",
-				slog.String("name", name),
-				slog.String("server", sourceConfig.AXFR.Server),
-				slog.Int("zones", len(sourceConfig.AXFR.Zones)),
-			)
 		default:
 			logger.Warn("unknown source, skipping", slog.String("source", name))
 		}
@@ -222,6 +196,47 @@ func registerSources(registry *source.Registry, cfg *config.Config, logger *slog
 	}
 
 	return nil
+}
+
+// registerRecordSources registers non-hostname record sources.
+//
+// These are full-record inputs (for example AXFR) that produce provider.Record
+// objects directly rather than hostname extraction from workloads/files.
+func registerRecordSources(cfg *config.Config, logger *slog.Logger) ([]source.RecordSource, error) {
+	var recordSources []source.RecordSource
+
+	for _, name := range cfg.SourceNames() {
+		if name != "axfr" {
+			continue
+		}
+
+		sourceConfig := cfg.GetSourceInstance("axfr")
+		src := axfr.New(
+			axfr.WithLogger(logger),
+			axfr.WithConfig(axfr.Config{
+				Server:               sourceConfig.AXFR.Server,
+				Zones:                sourceConfig.AXFR.Zones,
+				Provider:             sourceConfig.AXFR.Provider,
+				TSIGName:             sourceConfig.AXFR.TSIGName,
+				TSIGKey:              sourceConfig.AXFR.TSIGKey,
+				TSIGAlgo:             sourceConfig.AXFR.TSIGAlgo,
+				SyncSOA:              sourceConfig.AXFR.SyncSOA,
+				SyncNS:               sourceConfig.AXFR.SyncNS,
+				SyncApexAddress:      sourceConfig.AXFR.SyncApexAddress,
+				AddressRewriteCIDRs:   sourceConfig.AXFR.AddressRewriteCIDRs,
+				AddressRewriteTarget:  sourceConfig.AXFR.AddressRewriteTarget,
+			}),
+		)
+
+		recordSources = append(recordSources, src)
+		logger.Info("registered record source",
+			slog.String("name", name),
+			slog.String("server", sourceConfig.AXFR.Server),
+			slog.Int("zones", len(sourceConfig.AXFR.Zones)),
+		)
+	}
+
+	return recordSources, nil
 }
 
 // proxmoxTargetMode resolves the Proxmox target mode from config. Validation

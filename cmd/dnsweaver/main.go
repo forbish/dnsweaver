@@ -188,6 +188,10 @@ func run() error {
 	if err := registerSources(sourceRegistry, cfg, logger); err != nil {
 		return fmt.Errorf("registering sources: %w", err)
 	}
+	recordSources, err := registerRecordSources(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("registering record sources: %w", err)
+	}
 
 	// Initialize provider registry and manager (#125)
 	// The manager handles graceful initialization - providers that fail to connect
@@ -301,6 +305,7 @@ func run() error {
 	rec := reconciler.New(listers, sourceRegistry, providerRegistry,
 		reconciler.WithConfig(reconcilerCfg),
 		reconciler.WithLogger(logger),
+		reconciler.WithRecordSources(recordSources...),
 	)
 
 	// Recover ownership state from DNS providers on startup (#40)

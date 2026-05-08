@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,6 +78,8 @@ type Reconciler struct {
 	listers   []workload.Lister
 	sources   *source.Registry
 	providers *provider.Registry
+	// recordSources are optional full-record input sources (currently AXFR).
+	recordSources []source.RecordSource
 	config    Config
 	logger    *slog.Logger
 
@@ -124,6 +127,13 @@ func WithLogger(logger *slog.Logger) Option {
 func WithConfig(cfg Config) Option {
 	return func(r *Reconciler) {
 		r.config = cfg
+	}
+}
+
+// WithRecordSources sets full-record sources (for example AXFR).
+func WithRecordSources(sources ...source.RecordSource) Option {
+	return func(r *Reconciler) {
+		r.recordSources = append([]source.RecordSource(nil), sources...)
 	}
 }
 
@@ -216,6 +226,19 @@ func (r *Reconciler) Reconcile(ctx context.Context) (*Result, error) {
 
 	// Step 2: Extract hostnames from each workload
 	discoveredHostnames := r.extractHostnames(ctx, allWorkloads, result)
+	// Step 2b: Discover hostnames from full-record sources (e.g. AXFR).
+	discoveredRecordHostnames := r.discoverRecordHostnames(ctx, result)
+	for normalizedName, hostname := range discoveredRecordHostnames {
+		if _, exists := discoveredHostnames[normalizedName]; exists {
+			result.HostnamesDuplicate++
+			r.logger.Warn("duplicate hostname from record source",
+				slog.String("hostname", hostname.Name),
+				slog.String("source", hostname.Source),
+			)
+			continue
+		}
+		discoveredHostnames[normalizedName] = hostname
+	}
 
 	result.HostnamesDiscovered = len(discoveredHostnames)
 
@@ -354,6 +377,77 @@ func (r *Reconciler) extractHostnames(ctx context.Context, workloads []workload.
 			if _, exists := discoveredHostnames[normalizedName]; !exists {
 				discoveredHostnames[normalizedName] = hostname
 			}
+		}
+	}
+
+	return discoveredHostnames
+}
+
+// discoverRecordHostnames discovers hostnames from full-record sources and
+// converts them to source.Hostname with record hints.
+func (r *Reconciler) discoverRecordHostnames(ctx context.Context, result *Result) map[string]*source.Hostname {
+	discoveredHostnames := make(map[string]*source.Hostname)
+
+	if len(r.recordSources) == 0 {
+		return discoveredHostnames
+	}
+
+	for _, src := range r.recordSources {
+		records, err := src.DiscoverRecords(ctx)
+		if err != nil {
+			r.logger.Warn("record source discovery failed",
+				slog.String("source", src.Name()),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+
+		for _, record := range records {
+			name := strings.TrimSuffix(strings.TrimSpace(record.Hostname), ".")
+			if name == "" {
+				continue
+			}
+
+			metadata := copyStringMap(record.Metadata)
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+
+			providerOverride := strings.TrimSpace(metadata["provider"])
+			delete(metadata, "provider")
+
+			hostname := source.Hostname{
+				Name:   name,
+				Source: src.Name(),
+				RecordHints: &source.RecordHints{
+					Type:     string(record.Type),
+					Target:   strings.TrimSpace(record.Target),
+					TTL:      record.TTL,
+					Provider: providerOverride,
+					Metadata: metadata,
+				},
+				Metadata: metadata,
+			}
+
+			normalized := hostname.NormalizedName()
+			if err := hostname.Validate(); err != nil {
+				r.logger.Warn("skipping invalid hostname from record source",
+					slog.String("hostname", hostname.Name),
+					slog.String("source", hostname.Source),
+					slog.String("error", err.Error()),
+				)
+				result.HostnamesInvalid++
+				continue
+			}
+			if _, exists := discoveredHostnames[normalized]; exists {
+				r.logger.Warn("duplicate hostname in record source output",
+					slog.String("hostname", hostname.Name),
+					slog.String("source", hostname.Source),
+				)
+				result.HostnamesDuplicate++
+				continue
+			}
+			discoveredHostnames[normalized] = &hostname
 		}
 	}
 
@@ -645,4 +739,16 @@ func appendUnique(slice []string, value string) []string {
 		}
 	}
 	return append(slice, value)
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

@@ -255,16 +255,8 @@ func toProviderRecordType(recordType uint16) (provider.RecordType, bool) {
 		return provider.RecordTypeAAAA, true
 	case dns.TypeCNAME:
 		return provider.RecordTypeCNAME, true
-	case dns.TypeNS:
-		return provider.RecordTypeNS, true
-	case dns.TypeSOA:
-		return provider.RecordTypeSOA, true
 	case dns.TypeTXT:
 		return provider.RecordTypeTXT, true
-	case dns.TypePTR:
-		return provider.RecordTypePTR, true
-	case dns.TypeMX:
-		return provider.RecordTypeMX, true
 	case dns.TypeSRV:
 		return provider.RecordTypeSRV, true
 	case dns.TypeHTTPS:
