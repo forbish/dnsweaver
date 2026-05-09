@@ -272,6 +272,43 @@ func (r *Reconciler) ensureRecordForProvider(ctx context.Context, hostname *sour
 		return action
 	}
 
+	if recordType == provider.RecordTypeSRV {
+		if len(staleSrvRecords) > 0 {
+			action.Type = ActionUpdate
+		}
+		if err := inst.CreateRecordWithValues(ctx, hostname.Name, recordType, target, ttl, srvData, metadata); err != nil {
+			if provider.IsConflict(err) {
+				action.Type = ActionSkip
+				action.Status = StatusSkipped
+				action.Error = errRecordAlreadyExists
+				r.logger.Debug("SRV record already exists, skipping",
+					slog.String("hostname", hostname.Name),
+					slog.String("provider", inst.Name()),
+					slog.String("target", target),
+				)
+				r.ensureOwnershipRecord(ctx, hostname.Name, inst, metadata)
+			} else {
+				action.Status = StatusFailed
+				action.Error = err.Error()
+				r.logger.Error("failed to create SRV record",
+					slog.String("hostname", hostname.Name),
+					slog.String("provider", inst.Name()),
+					slog.String("target", target),
+					slog.String("error", err.Error()),
+				)
+			}
+		} else {
+			action.Status = StatusSuccess
+			r.logger.Info("created SRV record",
+				slog.String("hostname", hostname.Name),
+				slog.String("provider", inst.Name()),
+				slog.String("target", target),
+			)
+			r.ensureOwnershipRecord(ctx, hostname.Name, inst, metadata)
+		}
+		return action
+	}
+
 	// Step 5: Update or create records as needed
 	// If we have existing records with wrong targets, update the first one in place
 	// (duplicates with wrong targets should be cleaned up separately)

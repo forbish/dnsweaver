@@ -80,8 +80,8 @@ type Reconciler struct {
 	providers *provider.Registry
 	// recordSources are optional full-record input sources (currently AXFR).
 	recordSources []source.RecordSource
-	config    Config
-	logger    *slog.Logger
+	config        Config
+	logger        *slog.Logger
 
 	// enabled and dryRun are the runtime-mutable copies of config.Enabled
 	// and config.DryRun. They use atomic.Bool for safe concurrent access
@@ -228,8 +228,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (*Result, error) {
 	discoveredHostnames := r.extractHostnames(ctx, allWorkloads, result)
 	// Step 2b: Discover hostnames from full-record sources (e.g. AXFR).
 	discoveredRecordHostnames := r.discoverRecordHostnames(ctx, result)
-	for normalizedName, hostname := range discoveredRecordHostnames {
-		if _, exists := discoveredHostnames[normalizedName]; exists {
+	for discoveryKey, hostname := range discoveredRecordHostnames {
+		if _, exists := discoveredHostnames[hostname.NormalizedName()]; exists {
 			result.HostnamesDuplicate++
 			r.logger.Warn("duplicate hostname from record source",
 				slog.String("hostname", hostname.Name),
@@ -237,7 +237,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (*Result, error) {
 			)
 			continue
 		}
-		discoveredHostnames[normalizedName] = hostname
+		discoveredHostnames[discoveryKey] = hostname
 	}
 
 	result.HostnamesDiscovered = len(discoveredHostnames)
@@ -259,7 +259,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (*Result, error) {
 		for _, action := range actions {
 			result.AddAction(action)
 			if action.Provider != "" && action.Type != ActionSkip {
-				currentProviderMapping[hostname.Name] = appendUnique(currentProviderMapping[hostname.Name], action.Provider)
+				normalizedName := hostname.NormalizedName()
+				currentProviderMapping[normalizedName] = appendUnique(currentProviderMapping[normalizedName], action.Provider)
 			}
 		}
 	}
@@ -275,8 +276,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (*Result, error) {
 	// Update known hostnames and provider mapping for next orphan check
 	r.mu.Lock()
 	r.knownHostnames = make(map[string]struct{}, len(discoveredHostnames))
-	for name := range discoveredHostnames {
-		r.knownHostnames[name] = struct{}{}
+	for _, hostname := range discoveredHostnames {
+		r.knownHostnames[hostname.NormalizedName()] = struct{}{}
 	}
 	r.hostnameProviders = currentProviderMapping
 	r.mu.Unlock()
@@ -428,8 +429,14 @@ func (r *Reconciler) discoverRecordHostnames(ctx context.Context, result *Result
 				},
 				Metadata: metadata,
 			}
+			if record.Type == provider.RecordTypeSRV && record.SRV != nil {
+				hostname.RecordHints.SRV = &source.SRVHints{
+					Priority: record.SRV.Priority,
+					Weight:   record.SRV.Weight,
+					Port:     record.SRV.Port,
+				}
+			}
 
-			normalized := hostname.NormalizedName()
 			if err := hostname.Validate(); err != nil {
 				r.logger.Warn("skipping invalid hostname from record source",
 					slog.String("hostname", hostname.Name),
@@ -439,7 +446,8 @@ func (r *Reconciler) discoverRecordHostnames(ctx context.Context, result *Result
 				result.HostnamesInvalid++
 				continue
 			}
-			if _, exists := discoveredHostnames[normalized]; exists {
+			key := recordSourceHostnameKey(hostname)
+			if _, exists := discoveredHostnames[key]; exists {
 				r.logger.Warn("duplicate hostname in record source output",
 					slog.String("hostname", hostname.Name),
 					slog.String("source", hostname.Source),
@@ -447,11 +455,27 @@ func (r *Reconciler) discoverRecordHostnames(ctx context.Context, result *Result
 				result.HostnamesDuplicate++
 				continue
 			}
-			discoveredHostnames[normalized] = &hostname
+			discoveredHostnames[key] = &hostname
 		}
 	}
 
 	return discoveredHostnames
+}
+
+func recordSourceHostnameKey(hostname source.Hostname) string {
+	key := hostname.NormalizedName()
+	if hostname.RecordHints == nil {
+		return key
+	}
+
+	hints := hostname.RecordHints
+	key += "|" + strings.ToUpper(strings.TrimSpace(hints.Type))
+	key += "|" + strings.TrimSpace(hints.Provider)
+	key += "|" + strings.TrimSpace(hints.Target)
+	if hints.SRV != nil {
+		key += fmt.Sprintf("|%d:%d:%d", hints.SRV.Priority, hints.SRV.Weight, hints.SRV.Port)
+	}
+	return key
 }
 
 // ReconcileHostname performs reconciliation for a single hostname.

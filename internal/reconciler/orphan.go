@@ -25,10 +25,12 @@ func (r *Reconciler) cleanupOrphans(ctx context.Context, currentHostnames map[st
 	}
 	r.mu.RUnlock()
 
+	currentHostnameNames := currentHostnameNameSet(currentHostnames)
+
 	// Count orphans before processing
 	var orphanCount int
 	for hostname := range previousHostnames {
-		if _, stillExists := currentHostnames[hostname]; !stillExists {
+		if _, stillExists := currentHostnameNames[hostname]; !stillExists {
 			orphanCount++
 		}
 	}
@@ -54,7 +56,7 @@ func (r *Reconciler) cleanupOrphans(ctx context.Context, currentHostnames map[st
 
 	// Find hostnames that were known before but are no longer present
 	for hostname := range previousHostnames {
-		if _, stillExists := currentHostnames[hostname]; !stillExists {
+		if _, stillExists := currentHostnameNames[hostname]; !stillExists {
 			r.logger.Info("detected orphan hostname",
 				slog.String("hostname", hostname),
 			)
@@ -73,6 +75,18 @@ func (r *Reconciler) cleanupOrphans(ctx context.Context, currentHostnames map[st
 	}
 
 	return actions
+}
+
+func currentHostnameNameSet(currentHostnames map[string]*source.Hostname) map[string]struct{} {
+	names := make(map[string]struct{}, len(currentHostnames))
+	for key, hostname := range currentHostnames {
+		if hostname == nil {
+			names[source.NormalizeHostname(key)] = struct{}{}
+			continue
+		}
+		names[hostname.NormalizedName()] = struct{}{}
+	}
+	return names
 }
 
 // getOrphanProviders returns the provider instances to clean up an orphaned hostname from.

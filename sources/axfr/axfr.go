@@ -176,13 +176,22 @@ func (a *AXFR) convert(zone string, record dnsupdate.Record) (provider.Record, b
 		metadata["provider"] = a.config.Provider
 	}
 
-	return provider.Record{
+	converted := provider.Record{
 		Hostname: strings.TrimSuffix(record.Name, "."),
 		Type:     recordType,
 		Target:   target,
 		TTL:      int(record.TTL),
 		Metadata: metadata,
-	}, true
+	}
+	if record.Type == dns.TypeSRV {
+		converted.SRV = &provider.SRVData{
+			Priority: record.Priority,
+			Weight:   record.Weight,
+			Port:     record.Port,
+		}
+	}
+
+	return converted, true
 }
 
 func (a *AXFR) shouldInclude(zone string, record dnsupdate.Record) bool {
