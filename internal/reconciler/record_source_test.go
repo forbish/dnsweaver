@@ -113,6 +113,43 @@ func TestDiscoverRecordHostnamesKeepsMultipleSRVRecordsForSameOwner(t *testing.T
 	}
 }
 
+func TestDiscoverRecordHostnamesAllowsADMSDCSOwners(t *testing.T) {
+	r := &Reconciler{
+		logger: quietLogger(),
+		recordSources: []source.RecordSource{
+			staticRecordSource{
+				name: "axfr",
+				records: []provider.Record{
+					{
+						Hostname: "_ldap._tcp.dc._msdcs.example.com",
+						Type:     provider.RecordTypeSRV,
+						Target:   "dc1.example.com.",
+						TTL:      900,
+						SRV:      &provider.SRVData{Priority: 0, Weight: 100, Port: 389},
+					},
+					{
+						Hostname: "0da137dc-4210-407e-a26b-739c1d92f839._msdcs.example.com",
+						Type:     provider.RecordTypeCNAME,
+						Target:   "dc1.example.com.",
+						TTL:      900,
+					},
+				},
+			},
+		},
+	}
+
+	hostnames := r.discoverRecordHostnames(context.Background(), NewResult(false))
+	if len(hostnames) != 2 {
+		t.Fatalf("len(hostnames) = %d, want 2", len(hostnames))
+	}
+	if findRecordSourceHostname(hostnames, "_ldap._tcp.dc._msdcs.example.com", "dc1.example.com.") == nil {
+		t.Fatal("expected AD _msdcs SRV record to be discovered")
+	}
+	if findRecordSourceHostname(hostnames, "0da137dc-4210-407e-a26b-739c1d92f839._msdcs.example.com", "dc1.example.com.") == nil {
+		t.Fatal("expected AD _msdcs CNAME record to be discovered")
+	}
+}
+
 func TestReconcileCreatesMultipleSRVRecordsFromRecordSource(t *testing.T) {
 	logger := quietLogger()
 	mock := newTestMockProvider("test-dns")

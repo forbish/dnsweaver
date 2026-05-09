@@ -437,7 +437,7 @@ func (r *Reconciler) discoverRecordHostnames(ctx context.Context, result *Result
 				}
 			}
 
-			if err := hostname.Validate(); err != nil {
+			if err := source.ValidateDNSOwnerName(hostname.Name); err != nil {
 				r.logger.Warn("skipping invalid hostname from record source",
 					slog.String("hostname", hostname.Name),
 					slog.String("source", hostname.Source),

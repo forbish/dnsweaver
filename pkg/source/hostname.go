@@ -51,6 +51,11 @@ var singleCharLabelRegex = regexp.MustCompile(`^[a-zA-Z0-9]$`)
 // These labels start with underscore followed by alphanumeric (e.g., _minecraft, _tcp, _udp).
 var srvLabelRegex = regexp.MustCompile(`^_[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$`)
 
+// dnsOwnerLabelRegex matches DNS owner-name labels used in records. Unlike
+// RFC 1123 hostnames, DNS owner names may contain underscore-prefixed labels
+// such as _acme-challenge, _ldap._tcp, and Active Directory's _msdcs.
+var dnsOwnerLabelRegex = regexp.MustCompile(`^[a-zA-Z0-9_]([a-zA-Z0-9_-]*[a-zA-Z0-9_])?$`)
+
 // NormalizeHostname returns the canonical lowercase form of a hostname.
 // DNS is case-insensitive per RFC 1035 Section 2.3.3, so this ensures
 // consistent comparison and map key usage.
@@ -146,6 +151,47 @@ func ValidateHostname(hostname string) error {
 	return nil
 }
 
+// ValidateDNSOwnerName validates a DNS record owner name.
+//
+// This is intentionally broader than ValidateHostname because DNS records can
+// be attached to owner names that are not valid hostnames. Common examples are
+// SRV owners (_service._proto.example.com), ACME TXT owners
+// (_acme-challenge.example.com), and Active Directory locator records under
+// _msdcs.
+func ValidateDNSOwnerName(name string) error {
+	name = strings.TrimSuffix(name, ".")
+	if name == "" {
+		return &HostnameValidationError{Hostname: name, Err: ErrHostnameEmpty}
+	}
+	if len(name) > MaxHostnameLength {
+		return &HostnameValidationError{Hostname: name, Err: ErrHostnameTooLong}
+	}
+
+	labels := strings.Split(name, ".")
+	for i, label := range labels {
+		if label == "" {
+			return &HostnameValidationError{Hostname: name, Label: label, Err: ErrLabelEmpty}
+		}
+		if len(label) > MaxLabelLength {
+			return &HostnameValidationError{Hostname: name, Label: label, Err: ErrLabelTooLong}
+		}
+		if i == 0 && label == "*" {
+			continue
+		}
+		if !dnsOwnerLabelRegex.MatchString(label) {
+			if !isDNSOwnerLabelStart(label[0]) {
+				return &HostnameValidationError{Hostname: name, Label: label, Err: ErrInvalidLabelStart}
+			}
+			if !isDNSOwnerLabelEnd(label[len(label)-1]) {
+				return &HostnameValidationError{Hostname: name, Label: label, Err: ErrInvalidLabelEnd}
+			}
+			return &HostnameValidationError{Hostname: name, Label: label, Err: ErrInvalidCharacters}
+		}
+	}
+
+	return nil
+}
+
 // ValidateSRVHostname validates an SRV record hostname according to RFC 2782.
 //
 // SRV hostnames have the format: _service._protocol.name.domain.tld
@@ -230,6 +276,14 @@ func ValidateSRVHostname(hostname string) error {
 // isAlphanumeric returns true if the byte is a-z, A-Z, or 0-9.
 func isAlphanumeric(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+func isDNSOwnerLabelStart(b byte) bool {
+	return isAlphanumeric(b) || b == '_'
+}
+
+func isDNSOwnerLabelEnd(b byte) bool {
+	return isAlphanumeric(b) || b == '_'
 }
 
 // SRVHints contains SRV record-specific hints from source labels.

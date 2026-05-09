@@ -172,6 +172,40 @@ func TestHostname_IsValid(t *testing.T) {
 	}
 }
 
+func TestValidateDNSOwnerName_Valid(t *testing.T) {
+	validOwnerNames := []string{
+		"_acme-challenge.example.com",
+		"_ldap._tcp.example.com",
+		"_ldap._tcp.dc._msdcs.example.com",
+		"0da137dc-4210-407e-a26b-739c1d92f839._msdcs.example.com",
+	}
+
+	for _, name := range validOwnerNames {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateDNSOwnerName(name); err != nil {
+				t.Errorf("ValidateDNSOwnerName(%q) returned error: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestValidateDNSOwnerName_Invalid(t *testing.T) {
+	invalidOwnerNames := []string{
+		"",
+		"bad..example.com",
+		"bad!name.example.com",
+		"-bad.example.com",
+	}
+
+	for _, name := range invalidOwnerNames {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateDNSOwnerName(name); err == nil {
+				t.Errorf("ValidateDNSOwnerName(%q) expected error, got nil", name)
+			}
+		})
+	}
+}
+
 func TestValidateSRVHostname_Valid(t *testing.T) {
 	validSRVHostnames := []string{
 		"_minecraft._tcp.mc.example.com",
