@@ -15,7 +15,7 @@ import (
 // It uses a List+Compare approach to handle IP changes and type conflicts:
 // 1. Check if record exists for hostname
 // 2. If exists with same target → skip (idempotent)
-// 3. If exists with different target (same type) → delete old, create new
+// 3. If exists with different target (same type) → add sibling for multi-value records, otherwise update
 // 4. If exists with different type → log warning, skip (don't delete manual records)
 //
 // When hostname has RecordHints, they override provider defaults:

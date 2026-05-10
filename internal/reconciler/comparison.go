@@ -244,12 +244,17 @@ func isBlockingTypeConflict(desired, existing provider.RecordType) bool {
 }
 
 func shouldCreateAdditionalRecord(hostname source.Hostname, recordType provider.RecordType) bool {
-	if hostname.Source != "axfr" {
-		return false
-	}
 	switch recordType {
 	case provider.RecordTypeA, provider.RecordTypeAAAA, provider.RecordTypeTXT, provider.RecordTypeHTTPS:
+	default:
+		return false
+	}
+
+	switch hostname.Source {
+	case "axfr":
 		return true
+	case "dnsweaver":
+		return hostname.RecordHints != nil && hostname.RecordHints.Provider != ""
 	default:
 		return false
 	}
