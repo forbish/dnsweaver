@@ -276,6 +276,187 @@ func TestEnsureRecordSRVDifferentTargetCreatesAdditionalRecord(t *testing.T) {
 	assertCreatedSRVTarget(t, created, "dc2.example.com.")
 }
 
+func TestEnsureRecordRecordSourceACreatesMissingSiblingWithoutReplacingExisting(t *testing.T) {
+	logger := quietLogger()
+	mock := newTestMockProvider("test-dns")
+	mock.AddRecord(provider.Record{
+		Hostname: "gc._msdcs.example.com",
+		Type:     provider.RecordTypeA,
+		Target:   "10.0.0.6",
+		TTL:      900,
+	})
+
+	providers := provider.NewRegistry(logger)
+	providers.RegisterFactory("mock", func(provider.FactoryConfig) (provider.Provider, error) {
+		return mock, nil
+	})
+	if err := providers.CreateInstance(provider.ProviderInstanceConfig{
+		Name:       "test-dns",
+		TypeName:   "mock",
+		RecordType: provider.RecordTypeA,
+		Target:     "192.0.2.1",
+		TTL:        300,
+		Domains:    []string{"*"},
+	}); err != nil {
+		t.Fatalf("CreateInstance() error = %v", err)
+	}
+
+	r := &Reconciler{
+		providers:      providers,
+		config:         Config{Enabled: true, OwnershipTracking: false},
+		logger:         logger,
+		knownHostnames: make(map[string]struct{}),
+	}
+	r.syncAtomics()
+
+	cache := newRecordCache(context.Background(), providers, logger)
+	actions := r.ensureRecord(context.Background(), &source.Hostname{
+		Name:   "gc._msdcs.example.com",
+		Source: "axfr",
+		RecordHints: &source.RecordHints{
+			Type:   "A",
+			Target: "10.0.0.2",
+			TTL:    900,
+		},
+	}, cache)
+
+	if len(actions) != 1 {
+		t.Fatalf("len(actions) = %d, want 1", len(actions))
+	}
+	if actions[0].Type != ActionCreate || actions[0].Status != StatusSuccess {
+		t.Fatalf("action = %#v, want successful create", actions[0])
+	}
+	if deleted := mock.GetDeleted(); len(deleted) != 0 {
+		t.Fatalf("deleted records = %+v, want none", deleted)
+	}
+
+	created := mock.GetCreatedDNSRecords()
+	if len(created) != 1 {
+		t.Fatalf("created DNS records = %d, want 1: %+v", len(created), created)
+	}
+	if created[0].Target != "10.0.0.2" {
+		t.Fatalf("created target = %q, want 10.0.0.2", created[0].Target)
+	}
+}
+
+func TestEnsureRecordCNAMERecordSourceTreatsTrailingDotAsSameTarget(t *testing.T) {
+	logger := quietLogger()
+	mock := newTestMockProvider("test-dns")
+	mock.AddRecord(provider.Record{
+		Hostname: "guid._msdcs.example.com",
+		Type:     provider.RecordTypeCNAME,
+		Target:   "dc.compute.example.com",
+		TTL:      900,
+	})
+
+	providers := provider.NewRegistry(logger)
+	providers.RegisterFactory("mock", func(provider.FactoryConfig) (provider.Provider, error) {
+		return mock, nil
+	})
+	if err := providers.CreateInstance(provider.ProviderInstanceConfig{
+		Name:       "test-dns",
+		TypeName:   "mock",
+		RecordType: provider.RecordTypeA,
+		Target:     "192.0.2.1",
+		TTL:        300,
+		Domains:    []string{"*"},
+	}); err != nil {
+		t.Fatalf("CreateInstance() error = %v", err)
+	}
+
+	r := &Reconciler{
+		providers:      providers,
+		config:         Config{Enabled: true, OwnershipTracking: false},
+		logger:         logger,
+		knownHostnames: make(map[string]struct{}),
+	}
+	r.syncAtomics()
+
+	cache := newRecordCache(context.Background(), providers, logger)
+	actions := r.ensureRecord(context.Background(), &source.Hostname{
+		Name:   "guid._msdcs.example.com",
+		Source: "axfr",
+		RecordHints: &source.RecordHints{
+			Type:   "CNAME",
+			Target: "dc.compute.example.com.",
+			TTL:    900,
+		},
+	}, cache)
+
+	if len(actions) != 1 {
+		t.Fatalf("len(actions) = %d, want 1", len(actions))
+	}
+	if actions[0].Type != ActionSkip || actions[0].Status != StatusSkipped {
+		t.Fatalf("action = %#v, want skip for existing equivalent CNAME", actions[0])
+	}
+	if created := mock.GetCreatedDNSRecords(); len(created) != 0 {
+		t.Fatalf("created DNS records = %+v, want none", created)
+	}
+	if deleted := mock.GetDeleted(); len(deleted) != 0 {
+		t.Fatalf("deleted records = %+v, want none", deleted)
+	}
+}
+
+func TestEnsureRecordAllowsARecordAlongsideHTTPSCompanion(t *testing.T) {
+	logger := quietLogger()
+	mock := newTestMockProvider("test-dns")
+	mock.AddRecord(provider.Record{
+		Hostname: "dc.example.com",
+		Type:     provider.RecordTypeHTTPS,
+		Target:   ".",
+		TTL:      300,
+	})
+
+	providers := provider.NewRegistry(logger)
+	providers.RegisterFactory("mock", func(provider.FactoryConfig) (provider.Provider, error) {
+		return mock, nil
+	})
+	if err := providers.CreateInstance(provider.ProviderInstanceConfig{
+		Name:       "test-dns",
+		TypeName:   "mock",
+		RecordType: provider.RecordTypeA,
+		Target:     "192.0.2.1",
+		TTL:        300,
+		Domains:    []string{"*"},
+	}); err != nil {
+		t.Fatalf("CreateInstance() error = %v", err)
+	}
+
+	r := &Reconciler{
+		providers:      providers,
+		config:         Config{Enabled: true, OwnershipTracking: false},
+		logger:         logger,
+		knownHostnames: make(map[string]struct{}),
+	}
+	r.syncAtomics()
+
+	cache := newRecordCache(context.Background(), providers, logger)
+	actions := r.ensureRecord(context.Background(), &source.Hostname{
+		Name:   "dc.example.com",
+		Source: "axfr",
+		RecordHints: &source.RecordHints{
+			Type:   "A",
+			Target: "10.0.0.6",
+			TTL:    900,
+		},
+	}, cache)
+
+	if len(actions) != 1 {
+		t.Fatalf("len(actions) = %d, want 1", len(actions))
+	}
+	if actions[0].Type != ActionCreate || actions[0].Status != StatusSuccess {
+		t.Fatalf("action = %#v, want successful create", actions[0])
+	}
+
+	created := mock.GetCreatedDNSRecords()
+	if len(created) != 1 {
+		t.Fatalf("created DNS records = %d, want 1: %+v", len(created), created)
+	}
+	if created[0].Type != provider.RecordTypeA || created[0].Target != "10.0.0.6" {
+		t.Fatalf("created record = %+v, want A 10.0.0.6", created[0])
+	}
+}
+
 func assertCreatedSRVTarget(t *testing.T, records []provider.Record, target string) {
 	t.Helper()
 	for _, record := range records {

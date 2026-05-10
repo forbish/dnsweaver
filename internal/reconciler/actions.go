@@ -171,7 +171,7 @@ func (r *Reconciler) ensureRecordForProvider(ctx context.Context, hostname *sour
 	for _, existing := range existingRecords {
 		if existing.Type == recordType {
 			sameTypeRecords = append(sameTypeRecords, existing)
-		} else {
+		} else if isBlockingTypeConflict(recordType, existing.Type) {
 			conflictingTypeRecords = append(conflictingTypeRecords, existing)
 		}
 	}
@@ -200,7 +200,7 @@ func (r *Reconciler) ensureRecordForProvider(ctx context.Context, hostname *sour
 	var exactMatchFound bool
 	var staleSrvRecords []provider.Record
 	for _, existing := range sameTypeRecords {
-		if existing.Target == target {
+		if recordTargetsEqual(recordType, existing.Target, target) {
 			// For SRV records, check if SRV-specific data matches
 			if recordType == provider.RecordTypeSRV {
 				if srvDataEquals(existing.SRV, srvData) {
@@ -315,6 +315,43 @@ func (r *Reconciler) ensureRecordForProvider(ctx context.Context, hostname *sour
 	// If no existing records, create new ones
 
 	if len(sameTypeRecords) > 0 {
+		if shouldCreateAdditionalRecord(*hostname, recordType) {
+			if err := inst.CreateRecordWithValues(ctx, hostname.Name, recordType, target, ttl, srvData, metadata); err != nil {
+				if provider.IsConflict(err) {
+					action.Type = ActionSkip
+					action.Status = StatusSkipped
+					action.Error = errRecordAlreadyExists
+					r.logger.Debug("record already exists, skipping",
+						slog.String("hostname", hostname.Name),
+						slog.String("provider", inst.Name()),
+						slog.String("type", string(recordType)),
+						slog.String("target", target),
+					)
+					r.ensureOwnershipRecord(ctx, hostname.Name, inst, metadata)
+				} else {
+					action.Status = StatusFailed
+					action.Error = err.Error()
+					r.logger.Error("failed to create additional record",
+						slog.String("hostname", hostname.Name),
+						slog.String("provider", inst.Name()),
+						slog.String("type", string(recordType)),
+						slog.String("target", target),
+						slog.String("error", err.Error()),
+					)
+				}
+			} else {
+				action.Status = StatusSuccess
+				r.logger.Info("created additional record",
+					slog.String("hostname", hostname.Name),
+					slog.String("provider", inst.Name()),
+					slog.String("type", string(recordType)),
+					slog.String("target", target),
+				)
+				r.ensureOwnershipRecord(ctx, hostname.Name, inst, metadata)
+			}
+			return action
+		}
+
 		// Update the first existing record - use UpdateRecord which handles native update vs fallback
 		existing := sameTypeRecords[0]
 		r.logger.Info("target changed, updating record",

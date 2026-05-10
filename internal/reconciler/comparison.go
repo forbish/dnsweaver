@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"fmt"
+	"strings"
 
 	"gitlab.bluewillows.net/root/dnsweaver/pkg/provider"
 	"gitlab.bluewillows.net/root/dnsweaver/pkg/source"
@@ -128,7 +129,7 @@ func CompareForHostname(existing, desired []provider.Record, hostname string) Re
 func recordKey(r provider.Record) string {
 	// Normalize hostname for case-insensitive comparison
 	normalized := source.NormalizeHostname(r.Hostname)
-	key := normalized + "|" + string(r.Type) + "|" + r.Target
+	key := normalized + "|" + string(r.Type) + "|" + comparableRecordTarget(r.Type, r.Target)
 
 	// For SRV records, include the SRV-specific data in the key
 	if r.Type == provider.RecordTypeSRV && r.SRV != nil {
@@ -186,7 +187,7 @@ func findExactMatch(records []provider.Record, target string, recordType provide
 		if r.Type != recordType {
 			continue
 		}
-		if r.Target != target {
+		if !recordTargetsEqual(recordType, r.Target, target) {
 			continue
 		}
 
@@ -210,7 +211,7 @@ func findStaleSRVRecords(records []provider.Record, target string, desiredSRV *p
 		if r.Type != provider.RecordTypeSRV {
 			continue
 		}
-		if r.Target != target {
+		if !recordTargetsEqual(provider.RecordTypeSRV, r.Target, target) {
 			continue
 		}
 		// Same target but different SRV data = stale
@@ -219,4 +220,37 @@ func findStaleSRVRecords(records []provider.Record, target string, desiredSRV *p
 		}
 	}
 	return stale
+}
+
+func recordTargetsEqual(recordType provider.RecordType, existingTarget, desiredTarget string) bool {
+	return comparableRecordTarget(recordType, existingTarget) == comparableRecordTarget(recordType, desiredTarget)
+}
+
+func comparableRecordTarget(recordType provider.RecordType, target string) string {
+	target = strings.TrimSpace(target)
+	switch recordType {
+	case provider.RecordTypeCNAME, provider.RecordTypeSRV:
+		return strings.ToLower(strings.TrimSuffix(target, "."))
+	default:
+		return target
+	}
+}
+
+func isBlockingTypeConflict(desired, existing provider.RecordType) bool {
+	if desired == existing {
+		return false
+	}
+	return desired == provider.RecordTypeCNAME || existing == provider.RecordTypeCNAME
+}
+
+func shouldCreateAdditionalRecord(hostname source.Hostname, recordType provider.RecordType) bool {
+	if hostname.Source != "axfr" {
+		return false
+	}
+	switch recordType {
+	case provider.RecordTypeA, provider.RecordTypeAAAA, provider.RecordTypeTXT, provider.RecordTypeHTTPS:
+		return true
+	default:
+		return false
+	}
 }
